@@ -10,3 +10,4 @@ dist
 .env.*
 .node_modules.lock
 AGENTS.md
+.project_id
