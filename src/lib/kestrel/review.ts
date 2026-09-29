@@ -1,3 +1,4 @@
+import { PAYOUTS } from "./payouts.ts";
 import type { Severity } from "./types";
 
 export type ReviewHit = {
@@ -24,8 +25,6 @@ type Rule = {
   summary: string;
   impact: string;
   remediation: string;
-  bountyLow: number;
-  bountyHigh: number;
   test: (line: string) => boolean;
 };
 
@@ -40,11 +39,14 @@ const RULES: Rule[] = [
       "A SQL statement on this line is assembled with request data. The database will treat that data as syntax, not as a value.",
     impact: "Read or change rows the caller should not see, and sometimes run further statements.",
     remediation: "Use a parameterized query. Keep the SQL text constant and bind values separately.",
-    bountyLow: 3000,
-    bountyHigh: 10000,
-    test: (line) =>
-      /\b(SELECT|INSERT|UPDATE|DELETE|UNION)\b/i.test(line) &&
-      /(\$\{|\+\s*(req\.|request\.|params|query|input|user|args|form)|\b(req\.|request\.)\w*)/i.test(line),
+    test: (line) => {
+      const shape =
+        /\bSELECT\b[\s\S]{0,160}\bFROM\b|\bINSERT\b[\s\S]{0,80}\bINTO\b|\bUPDATE\b[\s\S]{0,80}\bSET\b|\bDELETE\b[\s\S]{0,80}\bFROM\b|\bUNION\b[\s\S]{0,40}\bSELECT\b/i;
+      if (!shape.test(line)) return false;
+      return /\$\{[^}]*(req\.|request\.|params|query|input|user|args|form)|\+\s*(req\.|request\.|params\.|query\.|input|userInput|args|form)/i.test(
+        line,
+      );
+    },
   },
   {
     id: "xss",
@@ -56,8 +58,6 @@ const RULES: Rule[] = [
       "This line assigns data to an HTML sink. If that data can include tags or handlers, it runs as the victim.",
     impact: "Script execution in the reader's session.",
     remediation: "Render text, or sanitize with a strict allow-list. Do not use innerHTML for content you did not create.",
-    bountyLow: 1500,
-    bountyHigh: 6000,
     test: (line) =>
       /dangerouslySetInnerHTML|\.innerHTML\s*=|document\.write\s*\(|\bv-html\b/.test(line),
   },
@@ -70,8 +70,6 @@ const RULES: Rule[] = [
     summary: "The redirect location is taken from the request with no host allow-list visible on this line.",
     impact: "A trusted host can be used as a springboard onto a phishing site.",
     remediation: "Allow only relative paths that start with a single slash.",
-    bountyLow: 400,
-    bountyHigh: 1500,
     test: (line) =>
       /\bredirect\s*\([^)]*(req\.|request\.|params|query)/i.test(line) ||
       /location\s*=\s*(req\.|request\.)/i.test(line),
@@ -86,8 +84,6 @@ const RULES: Rule[] = [
       "The request body is assigned onto a model. Fields the UI never shows — roles, tiers, prices — still get written.",
     impact: "A caller can set server-owned fields.",
     remediation: "Copy an allow-list of fields. Never assign the body object itself.",
-    bountyLow: 1500,
-    bountyHigh: 6000,
     test: (line) =>
       /Object\.assign\s*\([^)]*req\.body/.test(line) ||
       /\.\.\.req\.body/.test(line) ||
@@ -103,8 +99,6 @@ const RULES: Rule[] = [
       "This line contains a hardcoded credential or a live-key prefix. If the value is real, rotate it before you file, and do not paste the raw secret into a public report.",
     impact: "Anyone with the source or the bundle can use the credential.",
     remediation: "Load secrets from a server-side store. Rotate anything that already shipped.",
-    bountyLow: 500,
-    bountyHigh: 4000,
     test: (line) =>
       /sk_live_[0-9A-Za-z]{8,}/.test(line) ||
       /AKIA[0-9A-Z]{16}/.test(line) ||
@@ -120,8 +114,6 @@ const RULES: Rule[] = [
     summary: "The server fetches a URL that comes from the request. Nothing on this line restricts the host.",
     impact: "The server can be turned toward metadata addresses, internal admin ports, or other tenants.",
     remediation: "Allow-list HTTPS hosts. Block link-local, loopback, and private ranges after resolution.",
-    bountyLow: 2000,
-    bountyHigh: 8000,
     test: (line) =>
       /requests\.(get|post|put|delete)\s*\(\s*(request|url|user|target)/i.test(line) ||
       /fetch\s*\(\s*(req\.|request\.|params|user|input|body|url)/.test(line) ||
@@ -137,8 +129,6 @@ const RULES: Rule[] = [
       "pickle.loads, yaml.load, or eval runs on data. Those parsers can construct objects, not just values.",
     impact: "Code execution on the server if an attacker can choose the bytes.",
     remediation: "Refuse pickle from the network. Use yaml.safe_load. Do not eval request data.",
-    bountyLow: 4000,
-    bountyHigh: 12000,
     test: (line) =>
       /pickle\.loads\s*\(/.test(line) ||
       (/yaml\.load\s*\(/.test(line) && !/safe_load|SafeLoader/.test(line)) ||
@@ -154,8 +144,6 @@ const RULES: Rule[] = [
     summary: "A filesystem read is built from request data. .. segments can leave the intended directory.",
     impact: "Read of secrets, source, or other users' files.",
     remediation: "Resolve the path and require it to stay under a fixed prefix, or use an allow-list of keys.",
-    bountyLow: 1500,
-    bountyHigh: 5000,
     test: (line) =>
       /(os\.ReadFile|ioutil\.ReadFile|readFile|createReadStream|sendFile|path\.join)\s*\(/.test(line) &&
       /(\+|\$\{|r\.URL|req\.|request\.|params|query|user)/.test(line),
@@ -169,8 +157,6 @@ const RULES: Rule[] = [
     summary: "Command text is built with request data and handed to a shell or exec.",
     impact: "Whoever can call this route can run commands as the server.",
     remediation: "Do not pass user data to a shell. Use an argument array, and allow-list the values.",
-    bountyLow: 4000,
-    bountyHigh: 15000,
     test: (line) =>
       (/exec\.Command\s*\(/.test(line) && /(\+|\$\{|r\.URL|req\.|Query\()/.test(line)) ||
       (/child_process|\bexec(?:Sync)?\s*\(/.test(line) && /(\+|\$\{)/.test(line)) ||
@@ -186,8 +172,6 @@ const RULES: Rule[] = [
     summary: "The verifier accepts alg=none, or verification is turned off. A caller can mint their own token.",
     impact: "Authentication bypass.",
     remediation: "Allow only the algorithms you sign with. Always verify the signature.",
-    bountyLow: 3000,
-    bountyHigh: 10000,
     test: (line) => /algorithms\s*:\s*\[[^\]]*none/i.test(line) || /verify\s*:\s*false/.test(line),
   },
   {
@@ -199,45 +183,89 @@ const RULES: Rule[] = [
     summary: "Math.random is not a cryptographic generator. Tokens built from it can be predicted.",
     impact: "Guessable reset links, sessions, or nonces.",
     remediation: "Use crypto.randomBytes or crypto.getRandomValues.",
-    bountyLow: 400,
-    bountyHigh: 1500,
-    test: (line) =>
-      /Math\.random\s*\(/.test(line) && /token|secret|reset|session|nonce/i.test(line),
+    test: (line) => /Math\.random\s*\(/.test(line) && /token|secret|reset|session|nonce/i.test(line),
   },
 ];
 
-function isComment(line: string) {
+export const CHECKED_PATTERNS = RULES.map((rule) => ({
+  id: rule.id,
+  title: rule.title,
+  cwe: rule.cwe,
+}));
+
+export function isComment(line: string) {
   const trimmed = line.trim();
-  return (
-    trimmed.startsWith("//") ||
-    trimmed.startsWith("#") ||
-    trimmed.startsWith("*") ||
-    trimmed.startsWith("/*") ||
-    trimmed.startsWith("--")
-  );
+  if (!trimmed) return false;
+  if (trimmed.startsWith("//") || trimmed.startsWith("/*")) return true;
+  if (trimmed.startsWith("--")) return true;
+  if (trimmed.startsWith("*")) {
+    const next = trimmed[1];
+    return next === undefined || next === " " || next === "\t" || next === "/";
+  }
+  if (trimmed.startsWith("#")) {
+    return !/^#\s*(include|define|if|ifdef|ifndef|else|elif|endif|pragma|undef|error|warning|line|import)\b/.test(
+      trimmed,
+    );
+  }
+  return false;
+}
+
+function joinAhead(lines: string[], start: number, span: number) {
+  const parts: string[] = [];
+  for (let i = start; i < Math.min(lines.length, start + span); i++) {
+    if (!lines[i].trim() || isComment(lines[i])) break;
+    parts.push(lines[i].trim());
+  }
+  return parts.join(" ");
+}
+
+export function findingKey(ruleId: string, snippet: string) {
+  let hash = 2166136261;
+  const text = `${ruleId}\n${snippet}`;
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `${ruleId}:${(hash >>> 0).toString(16)}`;
 }
 
 export function reviewSource(code: string): ReviewHit[] {
   const hits: ReviewHit[] = [];
+  const seen = new Set<string>();
   const lines = code.split(/\r?\n/);
+
+  const push = (rule: Rule, lineNo: number, snippet: string) => {
+    const key = `${rule.id}:${lineNo}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    const [bountyLow, bountyHigh] = PAYOUTS[rule.severity];
+    hits.push({
+      ruleId: rule.id,
+      line: lineNo,
+      snippet: snippet.slice(0, 240),
+      severity: rule.severity,
+      cwe: rule.cwe,
+      cvss: rule.cvss,
+      title: rule.title,
+      summary: rule.summary,
+      impact: rule.impact,
+      remediation: rule.remediation,
+      bountyLow,
+      bountyHigh,
+    });
+  };
+
   lines.forEach((line, index) => {
     if (!line.trim() || isComment(line)) return;
+    const window = joinAhead(lines, index, 3);
     for (const rule of RULES) {
-      if (!rule.test(line)) continue;
-      hits.push({
-        ruleId: rule.id,
-        line: index + 1,
-        snippet: line.trim().slice(0, 240),
-        severity: rule.severity,
-        cwe: rule.cwe,
-        cvss: rule.cvss,
-        title: rule.title,
-        summary: rule.summary,
-        impact: rule.impact,
-        remediation: rule.remediation,
-        bountyLow: rule.bountyLow,
-        bountyHigh: rule.bountyHigh,
-      });
+      if (rule.test(line)) {
+        push(rule, index + 1, line.trim());
+        continue;
+      }
+      if (window === line.trim() || !rule.test(window)) continue;
+      const laterHits = lines.slice(index + 1, index + 3).some((next) => next.trim() && !isComment(next) && rule.test(next));
+      if (!laterHits) push(rule, index + 1, window);
     }
   });
   return hits;

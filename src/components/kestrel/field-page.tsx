@@ -1,6 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import { band, money } from "@/lib/kestrel/format";
-import { PROGRAMS } from "@/lib/kestrel/programs";
+import { fullPlan, PROGRAMS } from "@/lib/kestrel/programs";
 import { useDesk } from "@/lib/kestrel/store";
 import { HuntLog } from "./hunt-log";
 import { Button, Eyebrow } from "./ui";
@@ -17,6 +17,7 @@ export function FieldPage() {
   const running = useDesk((state) => state.hunt.running);
   const dispatch = useDesk((state) => state.dispatch);
   const stop = useDesk((state) => state.stop);
+  const reshuffle = useDesk((state) => state.reshuffle);
   const open = findings.filter((finding) => finding.status !== "filed");
   const mid = open.reduce((sum, finding) => sum + (finding.bountyLow + finding.bountyHigh) / 2, 0);
   const low = open.reduce((sum, finding) => sum + finding.bountyLow, 0);
@@ -41,10 +42,11 @@ export function FieldPage() {
               Stop the hunt
             </Button>
           ) : (
-            <Button onClick={() => dispatch(PROGRAMS.map((program) => program.id))}>
-              Dispatch the case
-            </Button>
+            <Button onClick={() => dispatch(fullPlan())}>Dispatch the case</Button>
           )}
+          <Button tone="quiet" onClick={reshuffle} disabled={running}>
+            Reshuffle lab data
+          </Button>
           <Link
             to="/review"
             className="inline-flex min-h-11 items-center font-serif text-base text-copper"

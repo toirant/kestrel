@@ -1,14 +1,17 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { getProbes, PROGRAMS } from "./programs.ts";
+import { getWorld, rollWorld, type LabWorld } from "./runtime.ts";
 import type { Finding, FindingDraft, FindingStatus, HuntSnapshot, LogKind } from "./types";
 
 type DeskState = {
   findings: Finding[];
   draftCode: string;
   hunt: HuntSnapshot;
+  world: LabWorld;
   setDraftCode: (code: string) => void;
-  dispatch: (programIds: string[]) => void;
+  reshuffle: () => void;
+  dispatch: (plan: { programId: string; probeIds: string[] }[]) => void;
   stop: () => void;
   addDraft: (programId: string, programName: string, probeId: string, draft: FindingDraft) => boolean;
   setStatus: (id: string, status: FindingStatus) => void;
@@ -51,7 +54,9 @@ export const useDesk = create<DeskState>()(
       findings: [],
       draftCode: "",
       hunt: emptyHunt,
+      world: getWorld(),
       setDraftCode: (code) => set({ draftCode: code.slice(0, 8000) }),
+      reshuffle: () => set({ world: rollWorld() }),
       setStatus: (id, status) =>
         set((state) => ({
           findings: state.findings.map((finding) =>
@@ -80,7 +85,7 @@ export const useDesk = create<DeskState>()(
         controller?.abort();
         set((state) => ({ hunt: { ...state.hunt, running: false, phase: "idle" } }));
       },
-      dispatch: (programIds) => {
+      dispatch: (plan) => {
         const token = ++runToken;
         controller?.abort();
         const next = new AbortController();
@@ -106,17 +111,21 @@ export const useDesk = create<DeskState>()(
         };
 
         set({
-          hunt: { running: true, programId: programIds[0] ?? null, phase: "scope", lines: [] },
+          hunt: { running: true, programId: plan[0]?.programId ?? null, phase: "scope", lines: [] },
         });
 
         void (async () => {
           try {
             push("note", "Kestrel stays inside the lab. No packets leave this desk.");
             await sleep(pace, signal);
-            for (const id of programIds) {
+            for (const item of plan) {
               if (token !== runToken) return;
-              const program = PROGRAMS.find((item) => item.id === id);
+              const program = PROGRAMS.find((entry) => entry.id === item.programId);
               if (!program) continue;
+              const catalog = getProbes(program.id);
+              const probes = item.probeIds
+                .map((id) => catalog.find((probe) => probe.id === id))
+                .filter((probe): probe is NonNullable<typeof probe> => Boolean(probe));
               set((state) => ({
                 hunt: { ...state.hunt, programId: program.id, phase: "scope" },
               }));
@@ -131,7 +140,10 @@ export const useDesk = create<DeskState>()(
                 await sleep(Math.round(pace * 0.55), signal);
               }
               set((state) => ({ hunt: { ...state.hunt, phase: "probe" } }));
-              for (const probe of getProbes(program.id)) {
+              if (probes.length === 0) {
+                push("note", "No probes selected.");
+              }
+              for (const probe of probes) {
                 push("hypo", probe.hypothesis);
                 await sleep(pace, signal);
                 const result = probe.run();

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { pretty } from "@/lib/kestrel/format";
+import { useDesk } from "@/lib/kestrel/store";
 import {
   GLASS_BUNDLE_SOURCE,
   glassConsole,
@@ -44,6 +45,9 @@ function Preset({ label, onClick }: { label: string; onClick: () => void }) {
 }
 
 export function HarborLab() {
+  const world = useDesk((state) => state.world);
+  const avery = world.harbor[0];
+  const blake = world.harbor[1];
   const [accountId, setAccountId] = useState("acct_1001");
   const [accountOut, setAccountOut] = useState<string>("");
   const [leaked, setLeaked] = useState(false);
@@ -73,7 +77,10 @@ export function HarborLab() {
     <div className="space-y-8">
       <div>
         <p className="font-serif text-lg">Signed in as Avery Chen.</p>
-        <p className="mt-1 text-muted">Her account is acct_1001. Blake's is acct_1002.</p>
+        <p className="mt-1 text-muted">
+          Her account is {avery.id}. Balance {avery.balance.toFixed(2)}, last four {avery.last4}. Blake is{" "}
+          {blake.id}.
+        </p>
         <div className="mt-4 flex flex-wrap gap-2">
           <Preset label="Read Avery" onClick={() => read("acct_1001")} />
           <Preset label="Read Blake" onClick={() => read("acct_1002")} />
@@ -247,6 +254,8 @@ export function PylonLab() {
 }
 
 export function KilnLab() {
+  const world = useDesk((state) => state.world);
+  const catalogDollars = (world.kilnPrice / 100).toFixed(2);
   const [price, setPrice] = useState("84.00");
   const [orderOut, setOrderOut] = useState("");
   const [tampered, setTampered] = useState(false);
@@ -279,9 +288,9 @@ export function KilnLab() {
   return (
     <div className="space-y-8">
       <div>
-        <p className="font-serif text-lg">Wool blanket, catalog $84.00</p>
+        <p className="font-serif text-lg">Wool blanket, catalog ${catalogDollars}</p>
         <div className="mt-4 flex flex-wrap gap-2">
-          <Preset label="Pay the catalog" onClick={() => buy("84.00")} />
+          <Preset label="Pay the catalog" onClick={() => buy(catalogDollars)} />
           <Preset label="Pay $1.00" onClick={() => buy("1.00")} />
         </div>
         <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end">

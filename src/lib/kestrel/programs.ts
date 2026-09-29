@@ -1,10 +1,12 @@
 import { pretty } from "./format.ts";
+import { PAYOUTS } from "./payouts.ts";
 import {
   glassConsole,
   glassIssueReset,
   glassRedeem,
   glassScanBundle,
   GLASS_BUNDLE_SOURCE,
+  getWorld,
   harborGetAccount,
   harborPatchMe,
   harborSearch,
@@ -17,12 +19,7 @@ import {
 } from "./runtime.ts";
 import type { FindingDraft, Probe, Program, Severity } from "./types";
 
-const pay = {
-  critical: [6000, 15000] as [number, number],
-  high: [2000, 6000] as [number, number],
-  medium: [400, 1500] as [number, number],
-  low: [100, 400] as [number, number],
-};
+const pay = PAYOUTS;
 
 function draft(
   partial: Omit<FindingDraft, "bountyLow" | "bountyHigh"> & {
@@ -433,7 +430,8 @@ ${pretty({ url: target })}`,
       name: "Catalog price",
       hypothesis: "An honest price should match the catalog.",
       run: () => {
-        const result = kilnCheckout("wool-blanket", 8400);
+        const catalog = getWorld().kilnPrice;
+        const result = kilnCheckout("wool-blanket", catalog);
         return {
           hit: false,
           log: result.tampered
@@ -459,10 +457,10 @@ ${pretty({ url: target })}`,
             cwe: "CWE-602",
             asset: "shop.kiln.lab POST /checkout",
             summary:
-              "The catalog price of the wool blanket is 8400 cents. Checkout persists whatever priceCents the client posts. A request with 100 cents is accepted and charged.",
+              `The catalog price of the wool blanket is ${result.catalog} cents. Checkout persists whatever priceCents the client posts. A request with 100 cents is accepted and charged.`,
             steps: [
               "Place an order for wool-blanket with priceCents set to 100.",
-              "Read charged on the order. It is 100, not 8400.",
+              "Read charged on the order. It is 100, not the catalog price.",
             ],
             impact:
               "Direct loss on every order. The same trust usually extends to quantity, currency, and coupons.",
@@ -646,8 +644,6 @@ ${pretty({ email: "blake@glass.lab" })}`,
               "If the value were a real key, anyone who loads the page could spend it. Even a revoked-looking key in a bundle tells an attacker where else to look.",
             remediation:
               "Remove the secret from client code, rotate it, and restrict it server-side. Publish only a publishable key to the browser.",
-            bountyLow: 500,
-            bountyHigh: 2000,
             request: `GET /bundle.js HTTP/1.1
 Host: admin.glass.lab`,
             response: GLASS_BUNDLE_SOURCE,
@@ -664,6 +660,13 @@ export function getProgram(id: string) {
 
 export function getProbes(id: string) {
   return PROBES[id] ?? [];
+}
+
+export function fullPlan() {
+  return PROGRAMS.map((program) => ({
+    programId: program.id,
+    probeIds: getProbes(program.id).map((probe) => probe.id),
+  }));
 }
 
 export const SOURCE_PROGRAM_ID = "source";

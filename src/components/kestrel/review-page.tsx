@@ -1,18 +1,12 @@
 import { useState } from "react";
 import { deepenReview, type DeepFinding } from "@/lib/kestrel/deepen.functions";
 import { band } from "@/lib/kestrel/format";
+import { PAYOUTS } from "@/lib/kestrel/payouts";
 import { SOURCE_PROGRAM_ID, SOURCE_PROGRAM_NAME } from "@/lib/kestrel/programs";
-import { reviewSource, SAMPLES, type ReviewHit } from "@/lib/kestrel/review";
+import { CHECKED_PATTERNS, findingKey, reviewSource, SAMPLES, type ReviewHit } from "@/lib/kestrel/review";
 import { useDesk } from "@/lib/kestrel/store";
-import type { FindingDraft, Severity } from "@/lib/kestrel/types";
+import type { FindingDraft } from "@/lib/kestrel/types";
 import { Button, Eyebrow, SeverityChip } from "./ui";
-
-const BAND: Record<Severity, [number, number]> = {
-  critical: [4000, 12000],
-  high: [1500, 6000],
-  medium: [400, 1500],
-  low: [100, 400],
-};
 
 export function ReviewPage() {
   const code = useDesk((state) => state.draftCode);
@@ -25,7 +19,7 @@ export function ReviewPage() {
   const [overview, setOverview] = useState("");
   const [deep, setDeep] = useState<DeepFinding[]>([]);
   const [refused, setRefused] = useState("");
-  const [added, setAdded] = useState<Record<string, boolean>>({});
+  const [added, setAdded] = useState<Record<string, "added" | "already">>({});
 
   function read() {
     setHits(reviewSource(code));
@@ -36,7 +30,7 @@ export function ReviewPage() {
   }
 
   function fileHit(hit: ReviewHit) {
-    const key = `${hit.ruleId}:${hit.line}`;
+    const key = findingKey(hit.ruleId, hit.snippet);
     const draft: FindingDraft = {
       title: hit.title,
       severity: hit.severity,
@@ -56,12 +50,12 @@ export function ReviewPage() {
       response: "Static read of pasted source. No request was sent.",
     };
     const ok = addDraft(SOURCE_PROGRAM_ID, SOURCE_PROGRAM_NAME, key, draft);
-    setAdded((current) => ({ ...current, [key]: ok || current[key] === true || true }));
+    setAdded((current) => ({ ...current, [key]: ok ? "added" : "already" }));
   }
 
-  function fileDeep(finding: DeepFinding, index: number) {
-    const key = `grok:${index}:${finding.title.slice(0, 48)}`;
-    const [low, high] = BAND[finding.severity];
+  function fileDeep(finding: DeepFinding) {
+    const key = findingKey("grok", `${finding.title}\n${finding.evidence}`);
+    const [low, high] = PAYOUTS[finding.severity];
     const draft: FindingDraft = {
       title: finding.title,
       severity: finding.severity,
@@ -77,8 +71,8 @@ export function ReviewPage() {
       request: finding.evidence || "(no line quoted)",
       response: "Drafted from the paste. No live host was contacted.",
     };
-    addDraft(SOURCE_PROGRAM_ID, SOURCE_PROGRAM_NAME, key, draft);
-    setAdded((current) => ({ ...current, [key]: true }));
+    const ok = addDraft(SOURCE_PROGRAM_ID, SOURCE_PROGRAM_NAME, key, draft);
+    setAdded((current) => ({ ...current, [key]: ok ? "added" : "already" }));
   }
 
   async function draft() {
@@ -163,6 +157,10 @@ export function ReviewPage() {
           {busy ? "Drafting…" : "Draft with Kestrel"}
         </Button>
       </div>
+      <p className="max-w-xl font-mono text-xs text-faint">
+        Eight drafts an hour for your address, on this running instance. A cold start clears the count.
+        It is a soft guard, not a shared quota.
+      </p>
 
       {error ? <p className="max-w-xl text-copper">{error}</p> : null}
       {refused ? <p className="max-w-xl text-copper">{refused}</p> : null}
@@ -171,11 +169,24 @@ export function ReviewPage() {
         <section>
           <h2 className="font-serif text-2xl">Local read</h2>
           {hits.length === 0 ? (
-            <p className="mt-3 text-muted">No rule matched. That is not a clean bill of health — only these patterns were checked.</p>
+            <div className="mt-3 max-w-xl">
+              <p className="text-muted">
+                No rule matched. That is not a clean bill of health. These {CHECKED_PATTERNS.length} patterns
+                were checked, line by line and across a three-line window:
+              </p>
+              <ul className="mt-3 space-y-1">
+                {CHECKED_PATTERNS.map((pattern) => (
+                  <li key={pattern.id} className="font-mono text-xs text-faint">
+                    {pattern.cwe} · {pattern.title}
+                  </li>
+                ))}
+              </ul>
+            </div>
           ) : (
             <ul className="mt-4 divide-y divide-line border-y border-line">
               {hits.map((hit) => {
-                const key = `${hit.ruleId}:${hit.line}`;
+                const key = findingKey(hit.ruleId, hit.snippet);
+                const state = added[key];
                 return (
                   <li key={key} className="py-4">
                     <div className="flex flex-wrap items-center gap-2">
@@ -194,7 +205,7 @@ export function ReviewPage() {
                       Illustrative {band(hit.bountyLow, hit.bountyHigh)}
                     </p>
                     <Button tone="meta" className="mt-3" onClick={() => fileHit(hit)}>
-                      {added[key] ? "In the case file" : "Add to case file"}
+                      {state === "added" ? "In the case file" : state === "already" ? "Already in the case file" : "Add to case file"}
                     </Button>
                   </li>
                 );
@@ -209,8 +220,9 @@ export function ReviewPage() {
           <h2 className="font-serif text-2xl">Draft</h2>
           {overview ? <p className="mt-3 max-w-2xl leading-relaxed">{overview}</p> : null}
           <ul className="mt-4 space-y-4">
-            {deep.map((finding, index) => {
-              const key = `grok:${index}:${finding.title.slice(0, 48)}`;
+            {deep.map((finding) => {
+              const key = findingKey("grok", `${finding.title}\n${finding.evidence}`);
+              const state = added[key];
               return (
                 <li key={key} className="border border-line bg-surface p-4">
                   <SeverityChip severity={finding.severity} />
@@ -222,8 +234,8 @@ export function ReviewPage() {
                     </pre>
                   ) : null}
                   {finding.remediation ? <p className="mt-2 text-muted">{finding.remediation}</p> : null}
-                  <Button tone="meta" className="mt-3" onClick={() => fileDeep(finding, index)}>
-                    {added[key] ? "In the case file" : "Add to case file"}
+                  <Button tone="meta" className="mt-3" onClick={() => fileDeep(finding)}>
+                    {state === "added" ? "In the case file" : state === "already" ? "Already in the case file" : "Add to case file"}
                   </Button>
                 </li>
               );

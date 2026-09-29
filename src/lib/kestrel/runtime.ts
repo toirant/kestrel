@@ -11,16 +11,83 @@ export type HarborAccount = {
   last4: string;
 };
 
-export const HARBOR_ACCOUNTS: HarborAccount[] = [
-  { id: "acct_1001", owner: "user_avery", holder: "Avery Chen", balance: 4280.5, last4: "4412" },
-  { id: "acct_1002", owner: "user_blake", holder: "Blake Okonkwo", balance: 880.12, last4: "0091" },
-];
+export type KilnOrder = { id: string; owner: string; item: string; address: string };
+
+export type LabWorld = {
+  harbor: HarborAccount[];
+  kilnPrice: number;
+  kilnOrders: KilnOrder[];
+  glassUsers: number;
+};
+
+function mulberry32(seed: number) {
+  let state = seed >>> 0;
+  return () => {
+    state = (state + 0x6d2b79f5) | 0;
+    let t = Math.imul(state ^ (state >>> 15), 1 | state);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function digits(rng: () => number, length: number) {
+  let out = "";
+  for (let i = 0; i < length; i++) out += String(Math.floor(rng() * 10));
+  return out;
+}
+
+export function buildWorld(seed: number): LabWorld {
+  const rng = mulberry32(seed);
+  const street = 10 + Math.floor(rng() * 180);
+  return {
+    harbor: [
+      {
+        id: "acct_1001",
+        owner: "user_avery",
+        holder: "Avery Chen",
+        balance: Math.round((800 + rng() * 9000) * 100) / 100,
+        last4: digits(rng, 4),
+      },
+      {
+        id: "acct_1002",
+        owner: "user_blake",
+        holder: "Blake Okonkwo",
+        balance: Math.round((50 + rng() * 4000) * 100) / 100,
+        last4: digits(rng, 4),
+      },
+    ],
+    kilnPrice: 4000 + Math.floor(rng() * 8000),
+    kilnOrders: [
+      { id: "1001", owner: "user_avery", item: "Wool blanket", address: `${street} King St, Avery` },
+      { id: "1002", owner: "user_blake", item: "Brass lamp", address: `${street + 7} Pike St, Blake` },
+    ],
+    glassUsers: 200 + Math.floor(rng() * 4000),
+  };
+}
+
+/** Stable lab. Tests and the first paint use this. */
+export const CANONICAL_WORLD = buildWorld(1);
+
+let activeWorld = CANONICAL_WORLD;
+
+export function getWorld() {
+  return activeWorld;
+}
+
+export function setWorld(next: LabWorld) {
+  activeWorld = next;
+}
+
+export function rollWorld(seed = Date.now()) {
+  activeWorld = buildWorld(seed);
+  return activeWorld;
+}
 
 export function harborGetAccount(sessionUser: string | null, id: string) {
   if (!sessionUser) {
     return { status: 401 as const, body: null, leaked: false };
   }
-  const account = HARBOR_ACCOUNTS.find((row) => row.id === id) ?? null;
+  const account = getWorld().harbor.find((row) => row.id === id) ?? null;
   if (!account) return { status: 404 as const, body: null, leaked: false };
   return {
     status: 200 as const,
@@ -30,7 +97,7 @@ export function harborGetAccount(sessionUser: string | null, id: string) {
 }
 
 export function harborSearch(sessionUser: string, q: string) {
-  const owned = HARBOR_ACCOUNTS.filter(
+  const owned = getWorld().harbor.filter(
     (row) => row.owner === sessionUser && row.holder.toLowerCase().includes(q.toLowerCase()),
   );
   return { status: 200 as const, count: owned.length, ids: owned.map((row) => row.id) };
@@ -140,13 +207,11 @@ export function pylonImport(raw: string) {
   };
 }
 
-export const KILN_PRICES = { "wool-blanket": 8400 } as const;
-
 export function kilnCheckout(sku: string, priceCents: number) {
-  const catalog = KILN_PRICES[sku as keyof typeof KILN_PRICES];
-  if (catalog === undefined) {
+  if (sku !== "wool-blanket") {
     return { status: 404 as const, charged: 0, catalog: 0, tampered: false, orderId: "" };
   }
+  const catalog = getWorld().kilnPrice;
   return {
     status: 200 as const,
     charged: priceCents,
@@ -156,23 +221,16 @@ export function kilnCheckout(sku: string, priceCents: number) {
   };
 }
 
-export type KilnOrder = { id: string; owner: string; item: string; address: string };
-
-export const KILN_ORDERS: KilnOrder[] = [
-  { id: "1001", owner: "user_avery", item: "Wool blanket", address: "14 King St, Avery" },
-  { id: "1002", owner: "user_blake", item: "Brass lamp", address: "88 Pike St, Blake" },
-];
-
 export function kilnGetOrder(sessionUser: string | null, id: string) {
   if (!sessionUser) return { status: 401 as const, body: null, leaked: false };
-  const order = KILN_ORDERS.find((row) => row.id === id) ?? null;
+  const order = getWorld().kilnOrders.find((row) => row.id === id) ?? null;
   if (!order) return { status: 404 as const, body: null, leaked: false };
   return { status: 200 as const, body: order, leaked: order.owner !== sessionUser };
 }
 
 export function glassConsole(role: string) {
   if (role === "admin") {
-    return { status: 200 as const, panel: "staff", users: 1284, bypass: true };
+    return { status: 200 as const, panel: "staff", users: getWorld().glassUsers, bypass: true };
   }
   return { status: 403 as const, panel: "", users: 0, bypass: false };
 }
